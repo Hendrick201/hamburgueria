@@ -292,6 +292,13 @@
   .modal-close{ display:flex; justify-content:flex-end; margin-bottom: 6px; }
   .required-note{ font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
 
+  .addon-slot-header{
+    font-weight: 800; font-size: 0.85rem; color: var(--cheese);
+    text-transform: uppercase; letter-spacing: 0.03em;
+    margin: 18px 0 8px; padding-top: 12px; border-top: 1px solid var(--border);
+  }
+  .addon-slot-header:first-child{ margin-top: 0; padding-top: 0; border-top: none; }
+
   .dessert-row{
     display:flex; align-items:center; justify-content:space-between; gap: 12px;
     border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
@@ -445,6 +452,18 @@
     <p class="modal-sub">Selecione as opções desse item antes de adicionar ao carrinho.</p>
     <div id="optionsBody"></div>
     <button class="checkout-btn" id="optionsConfirmBtn" disabled>Adicionar ao carrinho</button>
+  </div>
+</div>
+
+<!-- KETCHUP & MAIONESE (obrigatório) -->
+<div class="modal" id="ketchupModal" role="dialog" aria-label="Ketchup e maionese">
+  <div class="modal-card">
+    <h3 class="display">Deseja <span class="accent" style="color:var(--ember)">ketchup e maionese?</span></h3>
+    <p class="modal-sub">Vai junto no seu pedido, sem custo extra.</p>
+    <div style="display:flex; gap:10px; margin-top: 8px;">
+      <button class="checkout-btn" id="ketchupNoBtn" style="background: var(--surface-2); color: var(--text-dim);">Não</button>
+      <button class="checkout-btn" id="ketchupYesBtn">Sim</button>
+    </div>
   </div>
 </div>
 
@@ -704,6 +723,11 @@
       return;
     }
 
+    if (item.category === "Lanches"){
+      el.innerHTML = `<button class="add-btn" onclick="addLancheToCart('${id}')">Adicionar</button>`;
+      return;
+    }
+
     const qty = cart[id] ? cart[id].qty : 0;
     if (qty === 0){
       el.innerHTML = `<button class="add-btn" onclick="changeQty('${id}',1)">Adicionar</button>`;
@@ -715,6 +739,21 @@
           <button onclick="changeQty('${id}',1)" aria-label="Aumentar">+</button>
         </div>`;
     }
+  }
+
+  let instanceSeq = 0;
+
+  function addLancheToCart(id){
+    if (!isOpenNow()){
+      showToast("Estamos fechados agora. Abrimos de terça a domingo, das 19h às 00h. 🕖");
+      return;
+    }
+    const item = MENU.find(m => m.id === id);
+    const cartKey = id + "__" + (++instanceSeq);
+    cart[cartKey] = { baseId: id, qty: 1, variantLabel: null, addons: [], addonSlots: [{ key: "main", label: item.name }] };
+    renderCart();
+    showToast("Adicionado ao carrinho! 🛒");
+    openAddonsModal(cartKey);
   }
 
   function changeQty(cartKey, delta, baseId, variantLabel){
@@ -724,41 +763,35 @@
       return;
     }
     const bId = baseId || cartKey;
-    const wasEmpty = !cart[cartKey] || cart[cartKey].qty === 0;
-    if (!cart[cartKey]) cart[cartKey] = { baseId: bId, qty: 0, variantLabel: variantLabel || null };
+    if (!cart[cartKey]) cart[cartKey] = { baseId: bId, qty: 0, variantLabel: variantLabel || null, addons: [] };
     cart[cartKey].qty += delta;
     if (cart[cartKey].qty <= 0) delete cart[cartKey];
     renderControl(bId);
     renderDessertControl(bId);
-    renderAddonControl(bId);
     updateDessertButtonLabel();
-    updateAddonsButtonLabel();
     renderCart();
+  }
 
-    const baseItem = MENU.find(m => m.id === bId);
-    if (delta > 0 && wasEmpty && baseItem && (baseItem.category === "Lanches" || baseItem.category === "Combos")){
-      openAddonsModal();
-    }
+  function adjustCartQty(cartKey, delta){
+    if (!cart[cartKey]) return;
+    cart[cartKey].qty += delta;
+    const baseId = cart[cartKey].baseId;
+    if (cart[cartKey].qty <= 0) delete cart[cartKey];
+    renderControl(baseId);
+    renderDessertControl(baseId);
+    updateDessertButtonLabel();
+    renderCart();
+  }
+
+  function entryAddonsTotal(entry){
+    return (entry.addons || []).reduce((s, a) => s + a.price * a.qty, 0);
+  }
+  function entryUnitPrice(item, entry){
+    return item.price + entryAddonsTotal(entry);
   }
 
   function renderDessertControl(id){
     const el = document.getElementById(`dessert-ctrl-${id}`);
-    if (!el) return;
-    const qty = cart[id] ? cart[id].qty : 0;
-    if (qty === 0){
-      el.innerHTML = `<button class="add-btn" onclick="changeQty('${id}',1)">Adicionar</button>`;
-    } else {
-      el.innerHTML = `
-        <div class="stepper">
-          <button onclick="changeQty('${id}',-1)" aria-label="Diminuir">–</button>
-          <span>${qty}</span>
-          <button onclick="changeQty('${id}',1)" aria-label="Aumentar">+</button>
-        </div>`;
-    }
-  }
-
-  function renderAddonControl(id){
-    const el = document.getElementById(`addon-ctrl-${id}`);
     if (!el) return;
     const qty = cart[id] ? cart[id].qty : 0;
     if (qty === 0){
@@ -825,17 +858,32 @@
 
   document.getElementById("optionsConfirmBtn").addEventListener("click", () => {
     const selections = [];
+    const selectionByGroup = {};
     currentOptionsItem.options.forEach(group => {
       const chosen = document.querySelector(`#optionsBody .pay-opt[data-group="${group.id}"].selected`);
       const choiceId = chosen.dataset.val;
       const choiceObj = group.choices.find(c => c.id === choiceId);
       selections.push(choiceObj.label);
+      selectionByGroup[group.id] = choiceObj.label;
     });
     const variantLabel = selections.join(" + ");
-    const cartKey = currentOptionsItem.id + "::" + selections.join("|");
+    const cartKey = currentOptionsItem.id + "__" + (++instanceSeq);
+
+    let addonSlots;
+    if (selectionByGroup.burger1 && selectionByGroup.burger2){
+      addonSlots = [
+        { key: "slot1", label: selectionByGroup.burger1 },
+        { key: "slot2", label: selectionByGroup.burger2 }
+      ];
+    } else {
+      addonSlots = [{ key: "main", label: currentOptionsItem.name }];
+    }
+
+    cart[cartKey] = { baseId: currentOptionsItem.id, qty: 1, variantLabel, addons: [], addonSlots };
     closeOptions();
-    changeQty(cartKey, 1, currentOptionsItem.id, variantLabel);
+    renderCart();
     showToast("Adicionado ao carrinho! 🛒");
+    openAddonsModal(cartKey);
   });
 
   // ---------- cart drawer ----------
@@ -850,7 +898,7 @@
     Object.values(cart).forEach(entry => {
       const item = MENU.find(m => m.id === entry.baseId);
       if (!item) return;
-      subtotal += item.price * entry.qty;
+      subtotal += entryUnitPrice(item, entry) * entry.qty;
       count += entry.qty;
     });
     const total = count > 0 ? subtotal + DELIVERY_FEE : 0;
@@ -869,16 +917,26 @@
       Object.entries(cart).forEach(([cartKey, entry]) => {
         const item = MENU.find(m => m.id === entry.baseId);
         if (!item) return;
+        const unit = entryUnitPrice(item, entry);
+        const addonsHtml = (entry.addons && entry.addons.length)
+          ? entry.addons.map(a => `<div class="cart-item-unit">+ ${a.qty}x ${a.name}${a.forLabel ? ` (${a.forLabel})` : ""}</div>`).join("")
+          : "";
         const row = document.createElement("div");
         row.className = "cart-item";
         row.innerHTML = `
           <div>
             <div class="cart-item-name">${item.name}</div>
             ${entry.variantLabel ? `<div class="cart-item-unit">${entry.variantLabel}</div>` : ""}
-            <div class="cart-item-unit">${entry.qty}x ${fmt(item.price)}</div>
+            ${addonsHtml}
+            <div class="cart-item-unit">${entry.qty}x ${fmt(unit)}</div>
           </div>
           <div class="cart-item-right">
-            <span class="cart-item-price mono">${fmt(item.price * entry.qty)}</span>
+            <span class="cart-item-price mono">${fmt(unit * entry.qty)}</span>
+            <div class="stepper">
+              <button onclick="adjustCartQty('${cartKey}',-1)" aria-label="Diminuir">–</button>
+              <span>${entry.qty}</span>
+              <button onclick="adjustCartQty('${cartKey}',1)" aria-label="Aumentar">+</button>
+            </div>
             <button class="remove-link" onclick="removeItem('${cartKey}')">remover</button>
           </div>
         `;
@@ -896,6 +954,8 @@
     const baseId = cart[cartKey] ? cart[cartKey].baseId : cartKey;
     delete cart[cartKey];
     renderControl(baseId);
+    renderDessertControl(baseId);
+    updateDessertButtonLabel();
     renderCart();
   }
 
@@ -956,63 +1016,130 @@
 
   document.getElementById("dessertContinueBtn").addEventListener("click", () => { closeDessertModal(); openDrawer(); });
 
-  // ---------- ADDONS UPSELL ----------
+  // ---------- ADDONS UPSELL (por item, escopado à instância do carrinho) ----------
   const addonsModal = document.getElementById("addonsModal");
-
-  function hasAddonsInCart(){
-    return Object.values(cart).some(entry => {
-      const item = MENU.find(m => m.id === entry.baseId);
-      return item && item.category === "Adicionais" && entry.qty > 0;
-    });
-  }
+  let currentAddonsCartKey = null;
+  let pendingAddons = {}; // { slotKey: { addonId: qty } }
 
   function renderAddonsModal(){
     const list = document.getElementById("addonsItemsList");
     list.innerHTML = "";
-    MENU.filter(i => i.category === "Adicionais").forEach(item => {
-      const row = document.createElement("div");
-      row.className = "dessert-row";
-      row.innerHTML = `
-        <div>
-          <div class="dessert-row-name">${item.name}</div>
-          <div class="dessert-row-price">${fmt(item.price)}</div>
-        </div>
-        <div id="addon-ctrl-${item.id}"></div>
-      `;
-      list.appendChild(row);
-      renderAddonControl(item.id);
+    const entry = cart[currentAddonsCartKey];
+    const slots = (entry && entry.addonSlots) || [{ key: "main", label: "" }];
+
+    slots.forEach(slot => {
+      if (slots.length > 1){
+        const header = document.createElement("div");
+        header.className = "addon-slot-header";
+        header.textContent = `Adicionais para: ${slot.label}`;
+        list.appendChild(header);
+      }
+      MENU.filter(i => i.category === "Adicionais").forEach(item => {
+        const row = document.createElement("div");
+        row.className = "dessert-row";
+        row.innerHTML = `
+          <div>
+            <div class="dessert-row-name">${item.name}</div>
+            <div class="dessert-row-price">${fmt(item.price)}</div>
+          </div>
+          <div id="pending-ctrl-${slot.key}-${item.id}"></div>
+        `;
+        list.appendChild(row);
+        renderPendingAddonControl(slot.key, item.id);
+      });
     });
+    updateAddonsButtonLabel();
+  }
+
+  function renderPendingAddonControl(slotKey, id){
+    const el = document.getElementById(`pending-ctrl-${slotKey}-${id}`);
+    if (!el) return;
+    const qty = (pendingAddons[slotKey] && pendingAddons[slotKey][id]) || 0;
+    if (qty === 0){
+      el.innerHTML = `<button class="add-btn" onclick="adjustPendingAddon('${slotKey}','${id}',1)">Adicionar</button>`;
+    } else {
+      el.innerHTML = `
+        <div class="stepper">
+          <button onclick="adjustPendingAddon('${slotKey}','${id}',-1)" aria-label="Diminuir">–</button>
+          <span>${qty}</span>
+          <button onclick="adjustPendingAddon('${slotKey}','${id}',1)" aria-label="Aumentar">+</button>
+        </div>`;
+    }
+  }
+
+  function adjustPendingAddon(slotKey, id, delta){
+    if (!pendingAddons[slotKey]) pendingAddons[slotKey] = {};
+    pendingAddons[slotKey][id] = Math.max(0, (pendingAddons[slotKey][id] || 0) + delta);
+    renderPendingAddonControl(slotKey, id);
     updateAddonsButtonLabel();
   }
 
   function updateAddonsButtonLabel(){
     const btn = document.getElementById("addonsContinueBtn");
     if (!btn) return;
-    btn.textContent = hasAddonsInCart() ? "Continuar" : "Não, obrigado";
+    const any = Object.values(pendingAddons).some(slotObj => Object.values(slotObj).some(q => q > 0));
+    btn.textContent = any ? "Adicionar e continuar" : "Não, obrigado";
   }
 
-  function openAddonsModal(){
+  function openAddonsModal(cartKey){
+    currentAddonsCartKey = cartKey;
+    pendingAddons = {};
     renderAddonsModal();
     addonsModal.classList.add("open");
     overlay.classList.add("open");
   }
   function closeAddonsModal(){ addonsModal.classList.remove("open"); overlay.classList.remove("open"); }
 
-  document.getElementById("addonsContinueBtn").addEventListener("click", () => { closeAddonsModal(); });
+  document.getElementById("addonsContinueBtn").addEventListener("click", () => {
+    if (currentAddonsCartKey && cart[currentAddonsCartKey]){
+      const entry = cart[currentAddonsCartKey];
+      const slots = entry.addonSlots || [{ key: "main", label: "" }];
+      const chosen = [];
+      slots.forEach(slot => {
+        const slotPending = pendingAddons[slot.key] || {};
+        Object.entries(slotPending).forEach(([id, q]) => {
+          if (q > 0){
+            const a = MENU.find(m => m.id === id);
+            chosen.push({ id, name: a.name, price: a.price, qty: q, forLabel: slots.length > 1 ? slot.label : null });
+          }
+        });
+      });
+      entry.addons = chosen;
+      renderCart();
+    }
+    currentAddonsCartKey = null;
+    closeAddonsModal();
+  });
 
   // ---------- checkout modal ----------
   const modal = document.getElementById("modal");
+  let wantsKetchupMaionese = null;
   document.getElementById("goCheckoutBtn").addEventListener("click", () => {
     if (!isOpenNow()){
       showToast("Estamos fechados agora. Abrimos de terça a domingo, das 19h às 00h. 🕖");
       return;
     }
     closeDrawer();
-    openModal();
+    openKetchupModal();
   });
   document.getElementById("modalCloseBtn").addEventListener("click", closeModal);
   function openModal(){ modal.classList.add("open"); overlay.classList.add("open"); }
   function closeModal(){ modal.classList.remove("open"); overlay.classList.remove("open"); }
+
+  // ---------- ketchup & maionese (obrigatório antes do checkout) ----------
+  const ketchupModal = document.getElementById("ketchupModal");
+  function openKetchupModal(){ ketchupModal.classList.add("open"); overlay.classList.add("open"); }
+  function closeKetchupModal(){ ketchupModal.classList.remove("open"); overlay.classList.remove("open"); }
+  document.getElementById("ketchupYesBtn").addEventListener("click", () => {
+    wantsKetchupMaionese = true;
+    closeKetchupModal();
+    openModal();
+  });
+  document.getElementById("ketchupNoBtn").addEventListener("click", () => {
+    wantsKetchupMaionese = false;
+    closeKetchupModal();
+    openModal();
+  });
 
   function updateModalSummary(){
     const { subtotal, total } = getTotals();
@@ -1066,9 +1193,15 @@
     Object.values(cart).forEach(entry => {
       const item = MENU.find(m => m.id === entry.baseId);
       if (!item) return;
+      const unit = entryUnitPrice(item, entry);
       msg += `${entry.qty}x ${item.name}`;
       if (entry.variantLabel) msg += ` (${entry.variantLabel})`;
-      msg += ` – ${fmt(item.price * entry.qty)}\n\n`;
+      msg += ` – ${fmt(unit * entry.qty)}\n`;
+      if (entry.addons && entry.addons.length){
+        msg += `*Adicionais:*\n`;
+        entry.addons.forEach(a => { msg += `${a.qty}x ${a.name}${a.forLabel ? ` - ${a.forLabel}` : ""}\n`; });
+      }
+      msg += `\n`;
     });
     msg += `*Subtotal:* ${fmt(subtotal)}\n*Taxa de entrega:* ${fmt(DELIVERY_FEE)}\n*Total:* ${fmt(total)}\n`;
     msg += `\n*Cliente:* ${name}\n*Telefone:* ${phone}\n*CPF:* ${cpf}\n`;
@@ -1076,6 +1209,7 @@
     if (complement) msg += `\nComplemento: ${complement}`;
     if (reference) msg += `\nReferência: ${reference}`;
     if (orderNotes) msg += `\n\n*Observação:* ${orderNotes}`;
+    msg += `\n\n*Ketchup e maionese:* ${wantsKetchupMaionese ? "Sim" : "Não"}`;
     msg += `\n\n*Pagamento:* ${selectedPay}`;
     if (selectedPay === "Dinheiro" && changeFor) msg += `\nTroco para: ${changeFor}`;
 
