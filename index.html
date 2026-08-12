@@ -526,38 +526,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <script>
-  // 2. Variável com nome DIFERENTE da biblioteca global para evitar o "SyntaxError"
-  let supabaseClient;
-
-  async function initSupabase() {
-    try {
-      // Consome o seu endpoint na Vercel
-      const response = await fetch('/api/config');
-      const config = await response.json();
-
-      // 3. Usa a biblioteca global `supabase` passando os valores da sua API
-      supabaseClient = supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
-
-      console.log('Supabase conectado com sucesso!');
-
-      // 4. Inicie suas funções que dependem do banco AQUI dentro
-      carregarAplicacao();
-
-    } catch (error) {
-      console.error('Erro ao conectar com a API da Vercel:', error);
-    }
-  }
-
-  // Exemplo de função usando o cliente criado
-  function carregarAplicacao() {
-    // Agora você usa 'supabaseClient' em vez de 'supabase'
-    // Exemplo: 
-    // supabaseClient.from('produtos').select('*').then(res => console.log(res));
-  }
-
-  // Inicializa o processo
-  initSupabase();
-</script>
   const WHATSAPP_NUMBER = "5534998975745";
   const DELIVERY_FEE = 5;
 
