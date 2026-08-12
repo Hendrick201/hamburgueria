@@ -163,6 +163,15 @@
     transition: border-color .15s ease;
   }
   .item-card:hover{ border-color: rgba(255,90,31,0.4); }
+  .item-card.sold-out{ opacity: 0.5; filter: grayscale(1); }
+  .item-card.sold-out:hover{ border-color: var(--border); }
+
+  .sold-out-tag{
+    display:inline-block; background: var(--surface-2); color: var(--text-dim);
+    border: 1px solid var(--border); font-size: 0.7rem; font-weight: 700;
+    padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em;
+    margin-top: 4px;
+  }
 
   .item-image{
     width: 130px; height: 130px; border-radius: 12px; overflow:hidden; flex-shrink:0;
@@ -524,6 +533,7 @@
 
 <!-- 1. CDN da biblioteca Supabase -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script>
   const WHATSAPP_NUMBER = "5534998975745";
   const DELIVERY_FEE = 5;
@@ -678,10 +688,13 @@
     menuLoaded = true;
   }
 
+  let openHour = 19;
+  let closeHour = 24;
+
   async function loadStoreSettings(){
     const { data, error } = await supabaseClient
       .from("store_settings")
-      .select("force_closed")
+      .select("force_closed, open_time, close_time")
       .eq("id", 1)
       .single();
 
@@ -691,6 +704,15 @@
     }
 
     forceClosed = Boolean(data.force_closed);
+
+    if (data.open_time){
+      openHour = Number(String(data.open_time).split(":")[0]);
+    }
+    if (data.close_time){
+      // "00:00:00" no banco significa meia-noite -> tratado como 24h para o cálculo abaixo.
+      const closeHourRaw = Number(String(data.close_time).split(":")[0]);
+      closeHour = closeHourRaw === 0 ? 24 : closeHourRaw;
+    }
   }
 
   function getBrasiliaParts(){
@@ -730,8 +752,13 @@
     // Segunda-feira fechada o dia inteiro.
     if (day === 1) return false;
 
-    // Terça a domingo: 19:00 até 00:00.
-    return hour >= 19 && hour < 24;
+    // Terça a domingo: horário definido em store_settings (padrão 19:00 às 00:00).
+    return hour >= openHour && hour < closeHour;
+  }
+
+  function formatHour(h){
+    const normalized = h === 24 ? 0 : h;
+    return String(normalized).padStart(2, "0") + "h";
   }
 
   const statusBar = document.getElementById("statusBar");
@@ -744,14 +771,14 @@
 
     if (open){
       statusBar.classList.remove("closed");
-      statusText.textContent = "Estamos abertos agora · pedidos até 00h";
+      statusText.textContent = `Estamos abertos agora · pedidos até ${formatHour(closeHour)}`;
     } else {
       statusBar.classList.add("closed");
 
       if (forceClosed){
         statusText.textContent = "Loja fechada temporariamente";
       } else {
-        statusText.textContent = "Fechado agora · abrimos terça a domingo, das 19h às 00h";
+        statusText.textContent = `Fechado agora · abrimos terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}`;
       }
     }
 
@@ -773,7 +800,7 @@
   function renderMenu(){
     menuGrid.innerHTML = "";
     CATEGORY_ORDER.forEach(cat => {
-      const items = MENU.filter(i => i.category === cat && i.available);
+      const items = MENU.filter(i => i.category === cat);
       if (items.length === 0) return;
 
       const heading = document.createElement("h3");
@@ -786,7 +813,7 @@
       menuGrid.appendChild(group);
       items.forEach(item => {
         const card = document.createElement("div");
-        card.className = "item-card";
+        card.className = "item-card" + (!item.available ? " sold-out" : "");
         const imgSrc = item.image && item.image.trim() !== "" ? item.image : placeholderImg(PLACEHOLDER_COLORS[item.id] || "#3a332b");
         card.innerHTML = `
           <div class="item-image"><img src="${imgSrc}" alt="${item.name}" onerror="this.src='${placeholderImg('#3a332b')}'"></div>
@@ -794,6 +821,7 @@
             <div>
               <div class="item-name">${item.name}</div>
               <div class="item-desc">${item.desc}</div>
+              ${!item.available ? '<span class="sold-out-tag">Esgotado</span>' : ''}
             </div>
             <div class="item-bottom">
               <span class="item-price mono">${fmt(item.price)}</span>
@@ -821,7 +849,7 @@
     }
 
     if (!item.available){
-      el.innerHTML = `<button class="add-btn" disabled>Indisponível</button>`;
+      el.innerHTML = `<button class="add-btn" disabled>Esgotado</button>`;
       return;
     }
 
@@ -852,7 +880,7 @@
 
   function addLancheToCart(id){
     if (!isOpenNow()){
-      showToast("Estamos fechados agora. Abrimos de terça a domingo, das 19h às 00h. 🕖");
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
       return;
     }
     const item = MENU.find(m => m.id === id);
@@ -869,7 +897,7 @@
 
   function changeQty(cartKey, delta, baseId, variantLabel){
     if (!isOpenNow()){
-      showToast("Estamos fechados agora. Abrimos de terça a domingo, das 19h às 00h. 🕖");
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
       renderControl(baseId || cartKey);
       return;
     }
@@ -923,7 +951,7 @@
 
   function openOptions(id){
     if (!isOpenNow()){
-      showToast("Estamos fechados agora. Abrimos de terça a domingo, das 19h às 00h. 🕖");
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
       return;
     }
     currentOptionsItem = MENU.find(m => m.id === id);
@@ -1236,7 +1264,7 @@
   let wantsKetchupMaionese = null;
   document.getElementById("goCheckoutBtn").addEventListener("click", () => {
     if (!isOpenNow()){
-      showToast("Estamos fechados agora. Abrimos de terça a domingo, das 19h às 00h. 🕖");
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
       return;
     }
     closeDrawer();
@@ -1293,7 +1321,7 @@
 
   sendBtn.addEventListener("click", () => {
     if (!isOpenNow()){
-      showToast("Estamos fechados agora. Abrimos de terça a domingo, das 19h às 00h. 🕖");
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
       closeModal();
       return;
     }
