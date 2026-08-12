@@ -617,7 +617,7 @@
   let MENU = [];
   const PLACEHOLDER_COLORS = {};
 
-  let supabase = null;
+  let supabaseClient = null;
   let forceClosed = false;
   let menuLoaded = false;
 
@@ -640,14 +640,14 @@
       throw new Error("Variáveis do Supabase não configuradas na Vercel.");
     }
 
-    supabase = window.supabase.createClient(
+    supabaseClient = window.supabase.createClient(
       config.supabaseUrl,
       config.supabaseAnonKey
     );
   }
 
   async function loadMenu(){
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
       .from("menu_items")
       .select("id, category, name, description, price, available")
       .order("category")
@@ -680,7 +680,7 @@
   }
 
   async function loadStoreSettings(){
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
       .from("store_settings")
       .select("force_closed")
       .eq("id", 1)
