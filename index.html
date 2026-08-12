@@ -688,8 +688,13 @@
     menuLoaded = true;
   }
 
-  let openHour = 19;
-  let closeHour = 24;
+  let openMinutes = 19 * 60;
+  let closeMinutes = 24 * 60;
+
+  function timeToMinutes(t){
+    const [h, m] = String(t).split(":").map(Number);
+    return h * 60 + (m || 0);
+  }
 
   async function loadStoreSettings(){
     const { data, error } = await supabaseClient
@@ -706,12 +711,15 @@
     forceClosed = Boolean(data.force_closed);
 
     if (data.open_time){
-      openHour = Number(String(data.open_time).split(":")[0]);
+      openMinutes = timeToMinutes(data.open_time);
     }
     if (data.close_time){
-      // "00:00:00" no banco significa meia-noite -> tratado como 24h para o cálculo abaixo.
-      const closeHourRaw = Number(String(data.close_time).split(":")[0]);
-      closeHour = closeHourRaw === 0 ? 24 : closeHourRaw;
+      let close = timeToMinutes(data.close_time);
+      // Se o fechamento cai antes (ou no mesmo minuto) da abertura, é porque
+      // o horário atravessa a meia-noite (ex: abre 19:00, fecha 00:00 ou 02:00).
+      // Somamos 24h ao fechamento para representar isso numa linha do tempo contínua.
+      if (close <= openMinutes) close += 24 * 60;
+      closeMinutes = close;
     }
   }
 
@@ -720,6 +728,7 @@
       timeZone: "America/Sao_Paulo",
       weekday: "short",
       hour: "2-digit",
+      minute: "2-digit",
       hour12: false
     });
 
@@ -739,7 +748,8 @@
 
     return {
       day: weekdayMap[parts.weekday],
-      hour: Number(parts.hour)
+      hour: Number(parts.hour),
+      minute: Number(parts.minute)
     };
   }
 
@@ -747,18 +757,26 @@
     // Fechamento manual tem prioridade sobre o horário normal.
     if (forceClosed) return false;
 
-    const { day, hour } = getBrasiliaParts();
+    const { day, hour, minute } = getBrasiliaParts();
+    const nowMinutes = hour * 60 + minute;
 
-    // Segunda-feira fechada o dia inteiro.
-    if (day === 1) return false;
+    // Segunda-feira fechada o dia inteiro (exceto se ainda for a madrugada
+    // de domingo pra segunda, dentro do horário que atravessou a meia-noite).
+    const stillInOvernightWindow = closeMinutes > 24 * 60 && nowMinutes < (closeMinutes - 24 * 60);
+    if (day === 1 && !stillInOvernightWindow) return false;
 
     // Terça a domingo: horário definido em store_settings (padrão 19:00 às 00:00).
-    return hour >= openHour && hour < closeHour;
+    // Se o fechamento atravessa a meia-noite, comparamos também com nowMinutes + 24h
+    // para cobrir o intervalo já na madrugada do dia seguinte.
+    return (nowMinutes >= openMinutes && nowMinutes < closeMinutes) ||
+           (nowMinutes + 24 * 60 >= openMinutes && nowMinutes + 24 * 60 < closeMinutes);
   }
 
-  function formatHour(h){
-    const normalized = h === 24 ? 0 : h;
-    return String(normalized).padStart(2, "0") + "h";
+  function formatHour(totalMinutes){
+    const normalized = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+    const h = Math.floor(normalized / 60);
+    const m = normalized % 60;
+    return String(h).padStart(2, "0") + (m ? ":" + String(m).padStart(2, "0") : "h");
   }
 
   const statusBar = document.getElementById("statusBar");
@@ -771,14 +789,14 @@
 
     if (open){
       statusBar.classList.remove("closed");
-      statusText.textContent = `Estamos abertos agora · pedidos até ${formatHour(closeHour)}`;
+      statusText.textContent = `Estamos abertos agora · pedidos até ${formatHour(closeMinutes)}`;
     } else {
       statusBar.classList.add("closed");
 
       if (forceClosed){
         statusText.textContent = "Loja fechada temporariamente";
       } else {
-        statusText.textContent = `Fechado agora · abrimos terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}`;
+        statusText.textContent = `Fechado agora · abrimos terça a domingo, das ${formatHour(openMinutes)} às ${formatHour(closeMinutes)}`;
       }
     }
 
@@ -880,7 +898,7 @@
 
   function addLancheToCart(id){
     if (!isOpenNow()){
-      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openMinutes)} às ${formatHour(closeMinutes)}. 🕖`);
       return;
     }
     const item = MENU.find(m => m.id === id);
@@ -897,7 +915,7 @@
 
   function changeQty(cartKey, delta, baseId, variantLabel){
     if (!isOpenNow()){
-      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openMinutes)} às ${formatHour(closeMinutes)}. 🕖`);
       renderControl(baseId || cartKey);
       return;
     }
@@ -951,7 +969,7 @@
 
   function openOptions(id){
     if (!isOpenNow()){
-      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openMinutes)} às ${formatHour(closeMinutes)}. 🕖`);
       return;
     }
     currentOptionsItem = MENU.find(m => m.id === id);
@@ -1264,7 +1282,7 @@
   let wantsKetchupMaionese = null;
   document.getElementById("goCheckoutBtn").addEventListener("click", () => {
     if (!isOpenNow()){
-      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openMinutes)} às ${formatHour(closeMinutes)}. 🕖`);
       return;
     }
     closeDrawer();
@@ -1321,7 +1339,7 @@
 
   sendBtn.addEventListener("click", () => {
     if (!isOpenNow()){
-      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openHour)} às ${formatHour(closeHour)}. 🕖`);
+      showToast(`Estamos fechados agora. Abrimos de terça a domingo, das ${formatHour(openMinutes)} às ${formatHour(closeMinutes)}. 🕖`);
       closeModal();
       return;
     }
